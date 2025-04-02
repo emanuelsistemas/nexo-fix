@@ -1,0 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=MuseoModerno:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #6366f1;
+  --error: #ef4444;
+  --warning: #f59e0b;
+  --success: #10b981;
+}
+
+body {
+  @apply bg-gray-900 text-gray-100;
+}
+
+.logo-text {
+  font-family: 'MuseoModerno', sans-serif;
+}
