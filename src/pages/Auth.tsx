@@ -8,6 +8,7 @@ type AuthMode = 'login' | 'register';
 export function Auth() {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -29,20 +30,25 @@ export function Auth() {
           return;
         }
         
-        const { error } = await supabase.auth.signUp({
+        const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            data: {
+              full_name: fullName,
+            },
+          },
         });
         
-        if (error) throw error;
+        if (signUpError) throw signUpError;
         toast.success('Cadastro realizado com sucesso!');
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
         
-        if (error) throw error;
+        if (signInError) throw signInError;
         toast.success('Login realizado com sucesso!');
       }
     } catch (err) {
@@ -105,6 +111,21 @@ export function Auth() {
           </div>
 
           <form onSubmit={handleSubmit}>
+            {mode === 'register' && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-2">
+                  Nome completo
+                </label>
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full bg-gray-700 rounded-lg px-4 py-2 text-white"
+                  required
+                />
+              </div>
+            )}
+            
             <div className="mb-4">
               <label className="block text-sm font-medium mb-2">
                 E-mail

@@ -1,12 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Bug, Plus, AlertTriangle, AlertCircle, CheckCircle2, Pencil, Trash2, Check, ArrowUpDown, LogOut } from 'lucide-react';
+import { Bug, Plus, AlertTriangle, AlertCircle, CheckCircle2, Pencil, Trash2, ChevronRight, ChevronLeft, LogOut, Inbox, X, GripVertical } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable, DropResult } from 'react-beautiful-dnd';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-toastify';
 
 type Priority = 'high' | 'medium' | 'low';
-type Status = 'pending' | 'completed';
+type Status = 'pending' | 'in_progress' | 'completed';
 type SortField = 'priority' | 'date' | 'status';
 type SortOrder = 'asc' | 'desc';
+
+type System = {
+  id: string;
+  name: string;
+};
+
+interface Profile {
+  id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+}
 
 type Issue = {
   id: string;
@@ -15,62 +28,110 @@ type Issue = {
   priority: Priority;
   status: Status;
   created_at: string;
+  user_id: string;
+  profiles?: Profile;
 };
+
+type Column = {
+  id: Status;
+  title: string;
+};
+
+const columns: Column[] = [
+  { id: 'pending', title: 'Pendentes' },
+  { id: 'in_progress', title: 'Corrigindo' },
+  { id: 'completed', title: 'Corrigidos' }
+];
+
+const statusTransitions = {
+  next: {
+    pending: 'in_progress',
+    in_progress: 'completed',
+    completed: 'pending'
+  },
+  prev: {
+    pending: 'completed',
+    in_progress: 'pending',
+    completed: 'in_progress'
+  }
+} as const;
 
 export function Dashboard() {
   const [issues, setIssues] = useState<Issue[]>([]);
+  const [systems, setSystems] = useState<System[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null);
+  const [showDescriptionModal, setShowDescriptionModal] = useState<Issue | null>(null);
   const [editingIssue, setEditingIssue] = useState<Issue | null>(null);
   const [newIssue, setNewIssue] = useState({
     module: '',
     description: '',
     priority: 'medium' as Priority
   });
-
-  // Filtros
-  const [filterPriority, setFilterPriority] = useState<Priority | 'all'>('all');
-  const [filterStatus, setFilterStatus] = useState<Status | 'all'>('all');
-
-  // Ordenação
-  const [sortField, setSortField] = useState<SortField>('priority');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [userFullName, setUserFullName] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
+    fetchSystems();
+    getCurrentUser();
     fetchIssues();
-  }, [filterPriority, filterStatus, sortField, sortOrder]);
+  }, []);
+
+  async function getCurrentUser() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (profile?.full_name) {
+          setUserFullName(profile.full_name);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao buscar usuário:', error);
+    }
+  }
+
+  async function fetchSystems() {
+    try {
+      const { data, error } = await supabase
+        .from('systems')
+        .select('*')
+        .order('name');
+
+      if (error) throw error;
+      setSystems(data || []);
+    } catch (error) {
+      console.error('Erro ao buscar sistemas:', error);
+    }
+  }
 
   async function fetchIssues() {
+    setLoading(true);
     try {
-      let query = supabase.from('issues').select('*');
-
-      // Aplicar filtros
-      if (filterPriority !== 'all') {
-        query = query.eq('priority', filterPriority);
-      }
-      if (filterStatus !== 'all') {
-        query = query.eq('status', filterStatus);
-      }
-
-      // Aplicar ordenação
-      switch (sortField) {
-        case 'priority':
-          query = query.order('priority', { ascending: sortOrder === 'asc' });
-          break;
-        case 'date':
-          query = query.order('created_at', { ascending: sortOrder === 'asc' });
-          break;
-        case 'status':
-          query = query.order('status', { ascending: sortOrder === 'asc' });
-          break;
-      }
-
-      const { data, error } = await query;
+      const { data, error } = await supabase
+        .from('issues')
+        .select(`
+          *,
+          profiles!inner (
+            id,
+            full_name,
+            email
+          )
+        `)
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
       setIssues(data || []);
     } catch (error) {
-      toast.error('Erro ao carregar os problemas');
       console.error('Erro ao buscar issues:', error);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -78,10 +139,8 @@ export function Dashboard() {
     e.preventDefault();
     
     try {
-      const user = await supabase.auth.getUser();
-      const userId = user.data.user?.id;
-
-      if (!userId) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.id) {
         toast.error('Usuário não autenticado');
         return;
       }
@@ -106,7 +165,8 @@ export function Dashboard() {
             module: newIssue.module,
             description: newIssue.description,
             priority: newIssue.priority,
-            user_id: userId
+            status: 'pending',
+            user_id: user.id
           }]);
 
         if (error) throw error;
@@ -142,6 +202,7 @@ export function Dashboard() {
 
       if (error) throw error;
       toast.success('Problema excluído com sucesso!');
+      setShowDeleteModal(null);
       fetchIssues();
     } catch (error) {
       toast.error('Erro ao excluir o problema');
@@ -149,33 +210,73 @@ export function Dashboard() {
     }
   };
 
-  const handleComplete = async (id: string, currentStatus: Status) => {
+  const handleDragStart = () => {
+    setIsDragging(true);
+  };
+
+  const handleDragEnd = async (result: DropResult) => {
+    setIsDragging(false);
+    
+    if (!result.destination) return;
+
+    const { draggableId, source, destination } = result;
+    
+    if (source.droppableId === destination.droppableId) return;
+
+    const newStatus = destination.droppableId as Status;
+
     try {
-      const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
+      // Otimistic update
+      setIssues(prevIssues => 
+        prevIssues.map(issue => 
+          issue.id === draggableId ? { ...issue, status: newStatus } : issue
+        )
+      );
+
       const { error } = await supabase
         .from('issues')
         .update({ 
           status: newStatus,
           updated_at: new Date().toISOString()
         })
-        .eq('id', id);
+        .eq('id', draggableId);
 
-      if (error) throw error;
-      toast.success(`Problema marcado como ${newStatus === 'completed' ? 'concluído' : 'pendente'}!`);
-      fetchIssues();
+      if (error) {
+        // Rollback if error
+        setIssues(prevIssues => 
+          prevIssues.map(issue => 
+            issue.id === draggableId ? { ...issue, status: source.droppableId as Status } : issue
+          )
+        );
+        throw error;
+      }
+      
+      toast.success('Status atualizado com sucesso!');
     } catch (error) {
       toast.error('Erro ao atualizar o status');
       console.error('Erro ao atualizar status:', error);
     }
   };
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortOrder('desc');
-    }
+  const handleStatusChange = (issue: Issue, direction: 'next' | 'prev') => {
+    const newStatus = direction === 'next' 
+      ? statusTransitions.next[issue.status]
+      : statusTransitions.prev[issue.status];
+
+    handleDragEnd({
+      draggableId: issue.id,
+      destination: { 
+        droppableId: newStatus,
+        index: 0
+      },
+      source: {
+        droppableId: issue.status,
+        index: issues.findIndex(i => i.id === issue.id)
+      },
+      reason: 'DROP',
+      mode: 'FLUID',
+      type: 'DEFAULT'
+    });
   };
 
   const handleLogout = async () => {
@@ -220,9 +321,13 @@ export function Dashboard() {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-3">
-            <Bug className="w-10 h-10 text-indigo-500" />
-            <h1 className="text-3xl font-bold text-white logo-text">nexo-fix</h1>
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3">
+              <Bug className="w-10 h-10 text-indigo-500" />
+              <h1 className="text-3xl font-bold text-white logo-text">nexo-fix</h1>
+            </div>
+            <span className="text-gray-400">|</span>
+            <span className="text-gray-300">Olá, {userFullName}</span>
           </div>
           <div className="flex gap-4">
             <button
@@ -246,103 +351,150 @@ export function Dashboard() {
           </div>
         </div>
 
-        {/* Filtros */}
-        <div className="bg-gray-800 p-4 rounded-lg mb-6">
-          <div className="flex gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Prioridade</label>
-              <select
-                value={filterPriority}
-                onChange={(e) => setFilterPriority(e.target.value as Priority | 'all')}
-                className="bg-gray-700 text-white rounded-lg px-3 py-2"
-              >
-                <option value="all">Todas</option>
-                <option value="high">Alta</option>
-                <option value="medium">Média</option>
-                <option value="low">Baixa</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Status</label>
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value as Status | 'all')}
-                className="bg-gray-700 text-white rounded-lg px-3 py-2"
-              >
-                <option value="all">Todos</option>
-                <option value="pending">Pendente</option>
-                <option value="completed">Concluído</option>
-              </select>
-            </div>
+        {/* Loading State */}
+        {loading && (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+            <p className="text-gray-400">Carregando problemas...</p>
           </div>
-        </div>
+        )}
 
-        {/* Grid de Issues */}
-        <div className="grid gap-4">
-          {/* Cabeçalho */}
-          <div className="grid grid-cols-[1fr,2fr,100px,100px] gap-4 bg-gray-800 p-4 rounded-lg">
-            <div>Módulo</div>
-            <div>Descrição</div>
+        {/* Empty State */}
+        {!loading && issues.length === 0 && (
+          <div className="text-center py-12 bg-gray-800 rounded-lg">
+            <Inbox className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+            <h3 className="text-xl font-medium text-gray-300 mb-2">Nenhum problema encontrado</h3>
+            <p className="text-gray-400 mb-6">Comece criando um novo problema clicando no botão acima.</p>
             <button
-              onClick={() => handleSort('priority')}
-              className="flex items-center gap-2 hover:text-indigo-400"
+              onClick={() => {
+                setEditingIssue(null);
+                setNewIssue({ module: '', description: '', priority: 'medium' });
+                setShowModal(true);
+              }}
+              className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors"
             >
-              Prioridade
-              <ArrowUpDown className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => handleSort('status')}
-              className="flex items-center gap-2 hover:text-indigo-400"
-            >
-              Status
-              <ArrowUpDown className="w-4 h-4" />
+              <Plus className="w-5 h-5" />
+              Criar Problema
             </button>
           </div>
+        )}
 
-          {/* Issues */}
-          {issues.map((issue) => (
-            <div
-              key={issue.id}
-              className={`grid grid-cols-[1fr,2fr,100px,100px] gap-4 bg-gray-800 p-4 rounded-lg items-center ${
-                issue.status === 'completed' ? 'opacity-50' : ''
-              }`}
-            >
-              <div>{issue.module}</div>
-              <div>{issue.description}</div>
-              <div className={`flex items-center gap-2 ${getPriorityColor(issue.priority)}`}>
-                {getPriorityIcon(issue.priority)}
-                {issue.priority === 'high' ? 'Alta' : issue.priority === 'medium' ? 'Média' : 'Baixa'}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleComplete(issue.id, issue.status)}
-                  className={`p-1 rounded-lg transition-colors ${
-                    issue.status === 'completed'
-                      ? 'bg-green-500/20 text-green-500'
-                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+        {/* Kanban Board */}
+        {!loading && issues.length > 0 && (
+          <DragDropContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <div className="grid grid-cols-3 gap-6">
+              {columns.map(column => (
+                <div 
+                  key={column.id} 
+                  className={`bg-gray-800 rounded-lg p-4 transition-colors ${
+                    isDragging ? 'ring-2 ring-indigo-500/50' : ''
                   }`}
-                  title={issue.status === 'completed' ? 'Marcar como pendente' : 'Marcar como concluído'}
                 >
-                  <Check className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => handleEdit(issue)}
-                  className="p-1 rounded-lg bg-gray-700 text-gray-400 hover:bg-gray-600"
-                  title="Editar"
-                >
-                  <Pencil className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => handleDelete(issue.id)}
-                  className="p-1 rounded-lg bg-gray-700 text-gray-400 hover:bg-gray-600"
-                  title="Excluir"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
+                  <h2 className="text-lg font-semibold mb-4">{column.title}</h2>
+                  <Droppable droppableId={column.id}>
+                    {(provided, snapshot) => (
+                      <div
+                        ref={provided.innerRef}
+                        {...provided.droppableProps}
+                        className={`space-y-4 min-h-[200px] rounded-lg transition-colors ${
+                          snapshot.isDraggingOver ? 'bg-gray-700/50' : ''
+                        }`}
+                      >
+                        {issues
+                          .filter(issue => issue.status === column.id)
+                          .map((issue, index) => (
+                            <Draggable
+                              key={issue.id}
+                              draggableId={issue.id}
+                              index={index}
+                            >
+                              {(provided, snapshot) => (
+                                <div
+                                  ref={provided.innerRef}
+                                  {...provided.draggableProps}
+                                  {...provided.dragHandleProps}
+                                  className={`bg-gray-700 rounded-lg p-4 shadow-sm transition-transform relative group ${
+                                    snapshot.isDragging ? 'shadow-lg ring-2 ring-indigo-500' : ''
+                                  }`}
+                                >
+                                  <div
+                                    className="absolute -top-2 -right-2 p-2 rounded-lg bg-gray-600 text-gray-400 group-hover:bg-gray-500 transition-colors pointer-events-none"
+                                    title="Arrastar"
+                                  >
+                                    <GripVertical className="w-4 h-4" />
+                                  </div>
+
+                                  <div className="flex justify-between items-start mb-3 mt-2">
+                                    <div className="font-medium">{issue.module}</div>
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => handleEdit(issue)}
+                                        className="p-1 rounded-lg bg-gray-600 text-gray-400 hover:bg-gray-500"
+                                        title="Editar"
+                                      >
+                                        <Pencil className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => setShowDeleteModal(issue.id)}
+                                        className="p-1 rounded-lg bg-gray-600 text-gray-400 hover:bg-gray-500"
+                                        title="Excluir"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleStatusChange(issue, 'prev')}
+                                        className={`p-1 rounded-lg ${
+                                          issue.status === 'pending'
+                                            ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                            : 'bg-gray-600 text-gray-400 hover:bg-gray-500'
+                                        }`}
+                                        title="Status anterior"
+                                        disabled={issue.status === 'pending'}
+                                      >
+                                        <ChevronLeft className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleStatusChange(issue, 'next')}
+                                        className={`p-1 rounded-lg ${
+                                          issue.status === 'completed'
+                                            ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                            : 'bg-gray-600 text-gray-400 hover:bg-gray-500'
+                                        }`}
+                                        title="Próximo status"
+                                        disabled={issue.status === 'completed'}
+                                      >
+                                        <ChevronRight className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div
+                                    onClick={() => setShowDescriptionModal(issue)}
+                                    className="text-gray-300 text-sm mb-3 line-clamp-2 cursor-pointer hover:text-gray-200"
+                                  >
+                                    {issue.description}
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <div className={`flex items-center gap-1 ${getPriorityColor(issue.priority)}`}>
+                                      {getPriorityIcon(issue.priority)}
+                                      <span>
+                                        {issue.priority === 'high' ? 'Alta' : issue.priority === 'medium' ? 'Média' : 'Baixa'}
+                                      </span>
+                                    </div>
+                                    <div className="text-gray-400">{issue.profiles?.full_name}</div>
+                                  </div>
+                                </div>
+                              )}
+                            </Draggable>
+                          ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </DragDropContext>
+        )}
 
         {/* Modal de Criação/Edição */}
         {showModal && (
@@ -353,14 +505,20 @@ export function Dashboard() {
               </h2>
               <form onSubmit={handleSubmit}>
                 <div className="mb-4">
-                  <label className="block text-sm font-medium mb-2">Módulo</label>
-                  <input
-                    type="text"
+                  <label className="block text-sm font-medium mb-2">Sistema</label>
+                  <select
                     value={newIssue.module}
                     onChange={(e) => setNewIssue({ ...newIssue, module: e.target.value })}
                     className="w-full bg-gray-700 rounded-lg px-4 py-2"
                     required
-                  />
+                  >
+                    <option value="">Selecione um sistema</option>
+                    {systems.map((system) => (
+                      <option key={system.id} value={system.name}>
+                        {system.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="mb-4">
                   <label className="block text-sm font-medium mb-2">Descrição</label>
@@ -404,6 +562,82 @@ export function Dashboard() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Confirmação de Exclusão */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
+              <h2 className="text-xl font-bold mb-4">Confirmar Exclusão</h2>
+              <p className="text-gray-300 mb-6">
+                Tem certeza que deseja excluir este problema? Esta ação não pode ser desfeita.
+              </p>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => handleDelete(showDeleteModal)}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+                >
+                  Excluir
+                </button>
+                <button
+                  onClick={() => setShowDeleteModal(null)}
+                  className="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Descrição Completa */}
+        {showDescriptionModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-xl font-bold mb-1">{showDescriptionModal.module}</h2>
+                  <div className="flex items-center gap-4 text-sm text-gray-400">
+                    <span>{showDescriptionModal.profiles?.full_name}</span>
+                    <div className={`flex items-center gap-1 ${getPriorityColor(showDescriptionModal.priority)}`}>
+                      {getPriorityIcon(showDescriptionModal.priority)}
+                      <span>
+                        {showDescriptionModal.priority === 'high' ? 'Alta' : showDescriptionModal.priority === 'medium' ? 'Média' : 'Baixa'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowDescriptionModal(null)}
+                  className="p-1 rounded-lg bg-gray-700 text-gray-400 hover:bg-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="bg-gray-700 rounded-lg p-4 mb-4">
+                <p className="text-gray-300 whitespace-pre-wrap">{showDescriptionModal.description}</p>
+              </div>
+              <div className="flex justify-end gap-4">
+                <button
+                  onClick={() => {
+                    setShowDescriptionModal(null);
+                    handleEdit(showDescriptionModal);
+                  }}
+                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg"
+                >
+                  <Pencil className="w-4 h-4" />
+                  Editar
+                </button>
+                <button
+                  onClick={() => setShowDescriptionModal(null)}
+                  className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
+                >
+                  <X className="w-4 h-4" />
+                  Fechar
+                </button>
+              </div>
             </div>
           </div>
         )}
