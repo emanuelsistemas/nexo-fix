@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bug, Plus, AlertTriangle, AlertCircle, CheckCircle2, Pencil, Trash2, ChevronRight, ChevronLeft, LogOut, Inbox, X, GripVertical, ChevronDown } from 'lucide-react';
+import { Bug, Plus, AlertTriangle, AlertCircle, CheckCircle2, Pencil, Trash2, ChevronRight, ChevronLeft, LogOut, Inbox, X, GripVertical, ChevronDown, History } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-toastify';
@@ -20,6 +20,15 @@ interface Profile {
   email: string;
 }
 
+interface IssueHistory {
+  id: string;
+  issue_id: string;
+  status: Status;
+  changed_at: string;
+  changed_by: string;
+  profiles?: Profile;
+}
+
 type Issue = {
   id: string;
   module: string;
@@ -31,6 +40,7 @@ type Issue = {
   updated_at?: string;
   user_id: string;
   profiles?: Profile;
+  history?: IssueHistory[];
 };
 
 type Column = {
@@ -75,6 +85,7 @@ export function Dashboard() {
   const [isDragging, setIsDragging] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState<Issue | null>(null);
 
   useEffect(() => {
     fetchSystems();
@@ -126,6 +137,15 @@ export function Dashboard() {
             id,
             full_name,
             email
+          ),
+          history:issue_history (
+            id,
+            status,
+            changed_at,
+            changed_by,
+            profiles (
+              full_name
+            )
           )
         `)
         .order('created_at', { ascending: false });
@@ -236,12 +256,6 @@ export function Dashboard() {
     const newStatus = destination.droppableId as Status;
 
     try {
-      setIssues(prevIssues => 
-        prevIssues.map(issue => 
-          issue.id === draggableId ? { ...issue, status: newStatus } : issue
-        )
-      );
-
       const { error } = await supabase
         .from('issues')
         .update({ 
@@ -250,42 +264,62 @@ export function Dashboard() {
         })
         .eq('id', draggableId);
 
-      if (error) {
-        setIssues(prevIssues => 
-          prevIssues.map(issue => 
-            issue.id === draggableId ? { ...issue, status: source.droppableId as Status } : issue
-          )
-        );
-        throw error;
-      }
+      if (error) throw error;
+      
+      // Immediately update local state
+      setIssues(prevIssues => 
+        prevIssues.map(issue => 
+          issue.id === draggableId ? { ...issue, status: newStatus } : issue
+        )
+      );
+      
+      // Fetch fresh data to get updated history
+      await fetchIssues();
       
       toast.success('Status atualizado com sucesso!');
     } catch (error) {
+      // Revert local state on error
+      setIssues(prevIssues => 
+        prevIssues.map(issue => 
+          issue.id === draggableId ? { ...issue, status: source.droppableId as Status } : issue
+        )
+      );
       toast.error('Erro ao atualizar o status');
       console.error('Erro ao atualizar status:', error);
     }
   };
 
-  const handleStatusChange = (issue: Issue, direction: 'next' | 'prev') => {
+  const handleStatusChange = async (issue: Issue, direction: 'next' | 'prev') => {
     const newStatus = direction === 'next' 
       ? statusTransitions.next[issue.status]
       : statusTransitions.prev[issue.status];
 
-    handleDragEnd({
-      draggableId: issue.id,
-      destination: { 
-        droppableId: newStatus,
-        index: 0
-      },
-      source: {
-        droppableId: issue.status,
-        index: issues.findIndex(i => i.id === issue.id)
-      },
-      reason: 'DROP',
-      mode: 'FLUID',
-      type: 'DEFAULT',
-      combine: null // Adicionando a propriedade combine que é obrigatória no tipo DropResult
-    } as DropResult);
+    try {
+      const { error } = await supabase
+        .from('issues')
+        .update({ 
+          status: newStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', issue.id);
+
+      if (error) throw error;
+
+      // Immediately update local state
+      setIssues(prevIssues => 
+        prevIssues.map(i => 
+          i.id === issue.id ? { ...i, status: newStatus } : i
+        )
+      );
+
+      // Fetch fresh data to get updated history
+      await fetchIssues();
+
+      toast.success('Status atualizado com sucesso!');
+    } catch (error) {
+      toast.error('Erro ao atualizar o status');
+      console.error('Erro ao atualizar status:', error);
+    }
   };
 
   const handleLogout = async () => {
@@ -338,19 +372,25 @@ export function Dashboard() {
     }
   };
 
+  const getStatusLabel = (status: Status) => {
+    switch (status) {
+      case 'pending':
+        return 'Pendente';
+      case 'in_progress':
+        return 'Em Andamento';
+      case 'completed':
+        return 'Concluído';
+      default:
+        return status;
+    }
+  };
+
   const formatDateTime = (dateTimeString: string) => {
     try {
       if (!dateTimeString) return 'Data não disponível';
       
-      // Criar um objeto Date a partir da string (que está em UTC)
+      // Criar um objeto Date com o fuso horário de São Paulo
       const date = new Date(dateTimeString);
-      
-      // Ajustar para o fuso horário de São Paulo (UTC-3)
-      // São Paulo está 3 horas atrás do UTC
-      const saoPauloOffset = -3 * 60 * 60 * 1000; // -3 horas em milissegundos
-      const saoPauloTime = new Date(date.getTime() + saoPauloOffset);
-      
-      // Formatar para o padrão brasileiro
       return new Intl.DateTimeFormat('pt-BR', {
         day: '2-digit',
         month: '2-digit',
@@ -358,7 +398,8 @@ export function Dashboard() {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
-      }).format(saoPauloTime);
+        timeZone: 'America/Sao_Paulo'
+      }).format(date);
     } catch (error) {
       console.error('Erro ao formatar data:', error);
       return 'Data inválida';
@@ -368,7 +409,6 @@ export function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-900 p-6">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
@@ -436,7 +476,6 @@ export function Dashboard() {
           </div>
         </div>
 
-        {/* Loading State */}
         {loading && (
           <div className="text-center py-8">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mx-auto mb-4"></div>
@@ -444,7 +483,6 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Empty State */}
         {!loading && issues.length === 0 && (
           <div className="text-center py-12 bg-gray-800 rounded-lg">
             <Inbox className="w-16 h-16 text-gray-600 mx-auto mb-4" />
@@ -464,7 +502,6 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Kanban Board */}
         {!loading && issues.length > 0 && (
           <DragDropContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
             <div className="grid grid-cols-3 gap-6">
@@ -512,6 +549,13 @@ export function Dashboard() {
                                   <div className="flex justify-between items-start mb-3 mt-2">
                                     <div className="font-medium">{issue.module}</div>
                                     <div className="flex gap-2">
+                                      <button
+                                        onClick={() => setShowHistoryModal(issue)}
+                                        className="p-1 rounded-lg bg-gray-600 text-gray-400 hover:bg-gray-500"
+                                        title="Histórico"
+                                      >
+                                        <History className="w-4 h-4" />
+                                      </button>
                                       <button
                                         onClick={() => handleEdit(issue)}
                                         className="p-1 rounded-lg bg-gray-600 text-gray-400 hover:bg-gray-500"
@@ -589,10 +633,23 @@ export function Dashboard() {
           </DragDropContext>
         )}
 
-        {/* Modal de Criação/Edição */}
         {showModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
-            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
+          <div 
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md relative">
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setEditingIssue(null);
+                  setNewIssue({ module: '', description: '', priority: 'medium', type: 'problem' });
+                }}
+                className="absolute top-4 right-4 p-1 rounded-lg bg-gray-700 text-gray-400 hover:bg-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
               <h2 className="text-xl font-bold mb-4">
                 {editingIssue ? 'Editar' : 'Novo'} {getTypeLabel(newIssue.type)}
               </h2>
@@ -669,7 +726,6 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Modal de Confirmação de Exclusão */}
         {showDeleteModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
             <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
@@ -695,19 +751,17 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Modal de Descrição Completa */}
         {showDescriptionModal && (
           <div 
             className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
             onClick={(e) => {
-              // Impede que cliques no fundo fechem o modal ou passem para elementos por trás
               e.preventDefault();
               e.stopPropagation();
             }}
           >
             <div 
               className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl"
-              onClick={(e) => e.stopPropagation()} // Impede que cliques no conteúdo do modal propaguem para o fundo
+              onClick={(e) => e.stopPropagation()}
             >
               <div className="flex justify-between items-start mb-4">
                 <div>
@@ -746,6 +800,60 @@ export function Dashboard() {
                 </button>
                 <button
                   onClick={() => setShowDescriptionModal(null)}
+                  className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
+                >
+                  <X className="w-4 h-4" />
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showHistoryModal && (
+          <div 
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <div 
+              className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-xl font-bold mb-1">Histórico de Alterações</h2>
+                  <p className="text-gray-400">{showHistoryModal.module}</p>
+                </div>
+                <button
+                  onClick={() => setShowHistoryModal(null)}
+                  className="p-1 rounded-lg bg-gray-700 text-gray-400 hover:bg-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="bg-gray-700 rounded-lg p-4 mb-4">
+                <div className="space-y-4">
+                  {showHistoryModal.history?.sort((a, b) => 
+                    new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime()
+                  ).map((entry) => (
+                    <div key={entry.id} className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400">Status alterado para:</span>
+                        <span className="font-medium text-white">{getStatusLabel(entry.status)}</span>
+                      </div>
+                      <div className="text-gray-500">
+                        {formatDateTime(entry.changed_at)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setShowHistoryModal(null)}
                   className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
                 >
                   <X className="w-4 h-4" />
