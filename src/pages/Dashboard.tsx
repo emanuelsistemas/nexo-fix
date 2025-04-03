@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Bug, Plus, AlertTriangle, AlertCircle, CheckCircle2, Pencil, Trash2, ChevronRight, ChevronLeft, LogOut, Inbox, X, GripVertical } from 'lucide-react';
-import { DragDropContext, Droppable, Draggable, DropResult } from 'react-beautiful-dnd';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-toastify';
 
@@ -412,13 +412,13 @@ export function Dashboard() {
                                 <div
                                   ref={provided.innerRef}
                                   {...provided.draggableProps}
-                                  {...provided.dragHandleProps}
                                   className={`bg-gray-700 rounded-lg p-4 shadow-sm transition-transform relative group ${
                                     snapshot.isDragging ? 'shadow-lg ring-2 ring-indigo-500' : ''
                                   }`}
                                 >
                                   <div
-                                    className="absolute -top-2 -right-2 p-2 rounded-lg bg-gray-600 text-gray-400 group-hover:bg-gray-500 transition-colors pointer-events-none"
+                                    {...provided.dragHandleProps}
+                                    className="absolute -top-3 -right-3 p-2 rounded-lg bg-gray-600 text-gray-400 hover:bg-gray-500 transition-colors cursor-grab active:cursor-grabbing z-10"
                                     title="Arrastar"
                                   >
                                     <GripVertical className="w-4 h-4" />
