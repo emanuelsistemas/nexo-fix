@@ -8,6 +8,11 @@ type Priority = 'high' | 'medium' | 'low';
 type Status = 'pending' | 'in_progress' | 'completed';
 type IssueType = 'problem' | 'bug' | 'feature';
 
+interface System {
+  id: string;
+  name: string;
+}
+
 interface Profile {
   id: string;
   user_id: string;
@@ -23,6 +28,7 @@ type Issue = {
   status: Status;
   type: IssueType;
   created_at: string;
+  updated_at?: string;
   user_id: string;
   profiles?: Profile;
 };
@@ -277,8 +283,9 @@ export function Dashboard() {
       },
       reason: 'DROP',
       mode: 'FLUID',
-      type: 'DEFAULT'
-    });
+      type: 'DEFAULT',
+      combine: null // Adicionando a propriedade combine que é obrigatória no tipo DropResult
+    } as DropResult);
   };
 
   const handleLogout = async () => {
@@ -328,6 +335,33 @@ export function Dashboard() {
         return 'Nova Funcionalidade';
       default:
         return type;
+    }
+  };
+
+  const formatDateTime = (dateTimeString: string) => {
+    try {
+      if (!dateTimeString) return 'Data não disponível';
+      
+      // Criar um objeto Date a partir da string (que está em UTC)
+      const date = new Date(dateTimeString);
+      
+      // Ajustar para o fuso horário de São Paulo (UTC-3)
+      // São Paulo está 3 horas atrás do UTC
+      const saoPauloOffset = -3 * 60 * 60 * 1000; // -3 horas em milissegundos
+      const saoPauloTime = new Date(date.getTime() + saoPauloOffset);
+      
+      // Formatar para o padrão brasileiro
+      return new Intl.DateTimeFormat('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }).format(saoPauloTime);
+    } catch (error) {
+      console.error('Erro ao formatar data:', error);
+      return 'Data inválida';
     }
   };
 
@@ -524,17 +558,22 @@ export function Dashboard() {
                                   >
                                     {issue.description}
                                   </div>
-                                  <div className="flex items-center justify-between text-sm">
-                                    <div className="flex items-center gap-4">
-                                      <div className={`flex items-center gap-1 ${getPriorityColor(issue.priority)}`}>
-                                        {getPriorityIcon(issue.priority)}
-                                        <span>
-                                          {issue.priority === 'high' ? 'Alta' : issue.priority === 'medium' ? 'Média' : 'Baixa'}
-                                        </span>
+                                  <div className="flex flex-col gap-2">
+                                    <div className="flex items-center justify-between text-sm">
+                                      <div className="flex items-center gap-4">
+                                        <div className={`flex items-center gap-1 ${getPriorityColor(issue.priority)}`}>
+                                          {getPriorityIcon(issue.priority)}
+                                          <span>
+                                            {issue.priority === 'high' ? 'Alta' : issue.priority === 'medium' ? 'Média' : 'Baixa'}
+                                          </span>
+                                        </div>
+                                        <div className="text-gray-400">{getTypeLabel(issue.type)}</div>
                                       </div>
-                                      <div className="text-gray-400">{getTypeLabel(issue.type)}</div>
+                                      <div className="text-gray-400">{issue.profiles?.full_name}</div>
                                     </div>
-                                    <div className="text-gray-400">{issue.profiles?.full_name}</div>
+                                    <div className="text-xs text-gray-500 italic">
+                                      Atualizado em: {formatDateTime(issue.updated_at || issue.created_at)}
+                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -658,8 +697,18 @@ export function Dashboard() {
 
         {/* Modal de Descrição Completa */}
         {showDescriptionModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
-            <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl">
+          <div 
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onClick={(e) => {
+              // Impede que cliques no fundo fechem o modal ou passem para elementos por trás
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <div 
+              className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl"
+              onClick={(e) => e.stopPropagation()} // Impede que cliques no conteúdo do modal propaguem para o fundo
+            >
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <h2 className="text-xl font-bold mb-1">{showDescriptionModal.module}</h2>
