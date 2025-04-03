@@ -1,18 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Bug, Plus, AlertTriangle, AlertCircle, CheckCircle2, Pencil, Trash2, ChevronRight, ChevronLeft, LogOut, Inbox, X, GripVertical } from 'lucide-react';
+import { Bug, Plus, AlertTriangle, AlertCircle, CheckCircle2, Pencil, Trash2, ChevronRight, ChevronLeft, LogOut, Inbox, X, GripVertical, ChevronDown } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-toastify';
 
 type Priority = 'high' | 'medium' | 'low';
 type Status = 'pending' | 'in_progress' | 'completed';
-type SortField = 'priority' | 'date' | 'status';
-type SortOrder = 'asc' | 'desc';
-
-type System = {
-  id: string;
-  name: string;
-};
+type IssueType = 'problem' | 'bug' | 'feature';
 
 interface Profile {
   id: string;
@@ -27,6 +21,7 @@ type Issue = {
   description: string;
   priority: Priority;
   status: Status;
+  type: IssueType;
   created_at: string;
   user_id: string;
   profiles?: Profile;
@@ -66,11 +61,14 @@ export function Dashboard() {
   const [newIssue, setNewIssue] = useState({
     module: '',
     description: '',
-    priority: 'medium' as Priority
+    priority: 'medium' as Priority,
+    type: 'problem' as IssueType
   });
   const [userFullName, setUserFullName] = useState('');
   const [loading, setLoading] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [showTypeDropdown, setShowTypeDropdown] = useState(false);
 
   useEffect(() => {
     fetchSystems();
@@ -137,6 +135,7 @@ export function Dashboard() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsCreating(true);
     
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -152,6 +151,7 @@ export function Dashboard() {
             module: newIssue.module,
             description: newIssue.description,
             priority: newIssue.priority,
+            type: newIssue.type,
             updated_at: new Date().toISOString()
           })
           .eq('id', editingIssue.id);
@@ -165,6 +165,7 @@ export function Dashboard() {
             module: newIssue.module,
             description: newIssue.description,
             priority: newIssue.priority,
+            type: newIssue.type,
             status: 'pending',
             user_id: user.id
           }]);
@@ -174,12 +175,14 @@ export function Dashboard() {
       }
 
       setShowModal(false);
-      setNewIssue({ module: '', description: '', priority: 'medium' });
+      setNewIssue({ module: '', description: '', priority: 'medium', type: 'problem' });
       setEditingIssue(null);
       fetchIssues();
     } catch (error) {
       toast.error('Erro ao salvar o problema');
       console.error('Erro ao salvar:', error);
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -188,7 +191,8 @@ export function Dashboard() {
     setNewIssue({
       module: issue.module,
       description: issue.description,
-      priority: issue.priority
+      priority: issue.priority,
+      type: issue.type
     });
     setShowModal(true);
   };
@@ -226,7 +230,6 @@ export function Dashboard() {
     const newStatus = destination.droppableId as Status;
 
     try {
-      // Otimistic update
       setIssues(prevIssues => 
         prevIssues.map(issue => 
           issue.id === draggableId ? { ...issue, status: newStatus } : issue
@@ -242,7 +245,6 @@ export function Dashboard() {
         .eq('id', draggableId);
 
       if (error) {
-        // Rollback if error
         setIssues(prevIssues => 
           prevIssues.map(issue => 
             issue.id === draggableId ? { ...issue, status: source.droppableId as Status } : issue
@@ -316,6 +318,19 @@ export function Dashboard() {
     }
   };
 
+  const getTypeLabel = (type: IssueType) => {
+    switch (type) {
+      case 'problem':
+        return 'Problema';
+      case 'bug':
+        return 'Bug';
+      case 'feature':
+        return 'Nova Funcionalidade';
+      default:
+        return type;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 p-6">
       <div className="max-w-7xl mx-auto">
@@ -330,17 +345,53 @@ export function Dashboard() {
             <span className="text-gray-300">Olá, {userFullName}</span>
           </div>
           <div className="flex gap-4">
-            <button
-              onClick={() => {
-                setEditingIssue(null);
-                setNewIssue({ module: '', description: '', priority: 'medium' });
-                setShowModal(true);
-              }}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors"
-            >
-              <Plus className="w-5 h-5" />
-              Novo Problema
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowTypeDropdown(!showTypeDropdown)}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors"
+              >
+                <Plus className="w-5 h-5" />
+                Adicionar
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              {showTypeDropdown && (
+                <div className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-lg py-1 z-50">
+                  <button
+                    onClick={() => {
+                      setEditingIssue(null);
+                      setNewIssue({ ...newIssue, type: 'problem' });
+                      setShowModal(true);
+                      setShowTypeDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-700 text-white"
+                  >
+                    Problema
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingIssue(null);
+                      setNewIssue({ ...newIssue, type: 'bug' });
+                      setShowModal(true);
+                      setShowTypeDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-700 text-white"
+                  >
+                    Bug
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingIssue(null);
+                      setNewIssue({ ...newIssue, type: 'feature' });
+                      setShowModal(true);
+                      setShowTypeDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-700 text-white"
+                  >
+                    Nova Funcionalidade
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
@@ -368,7 +419,7 @@ export function Dashboard() {
             <button
               onClick={() => {
                 setEditingIssue(null);
-                setNewIssue({ module: '', description: '', priority: 'medium' });
+                setNewIssue({ module: '', description: '', priority: 'medium', type: 'problem' });
                 setShowModal(true);
               }}
               className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors"
@@ -474,11 +525,14 @@ export function Dashboard() {
                                     {issue.description}
                                   </div>
                                   <div className="flex items-center justify-between text-sm">
-                                    <div className={`flex items-center gap-1 ${getPriorityColor(issue.priority)}`}>
-                                      {getPriorityIcon(issue.priority)}
-                                      <span>
-                                        {issue.priority === 'high' ? 'Alta' : issue.priority === 'medium' ? 'Média' : 'Baixa'}
-                                      </span>
+                                    <div className="flex items-center gap-4">
+                                      <div className={`flex items-center gap-1 ${getPriorityColor(issue.priority)}`}>
+                                        {getPriorityIcon(issue.priority)}
+                                        <span>
+                                          {issue.priority === 'high' ? 'Alta' : issue.priority === 'medium' ? 'Média' : 'Baixa'}
+                                        </span>
+                                      </div>
+                                      <div className="text-gray-400">{getTypeLabel(issue.type)}</div>
                                     </div>
                                     <div className="text-gray-400">{issue.profiles?.full_name}</div>
                                   </div>
@@ -501,7 +555,7 @@ export function Dashboard() {
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
             <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
               <h2 className="text-xl font-bold mb-4">
-                {editingIssue ? 'Editar Problema' : 'Novo Problema'}
+                {editingIssue ? 'Editar' : 'Novo'} {getTypeLabel(newIssue.type)}
               </h2>
               <form onSubmit={handleSubmit}>
                 <div className="mb-4">
@@ -545,16 +599,26 @@ export function Dashboard() {
                 <div className="flex gap-4">
                   <button
                     type="submit"
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg"
+                    disabled={isCreating}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed relative"
                   >
-                    {editingIssue ? 'Salvar' : 'Criar'}
+                    {isCreating ? (
+                      <>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        </div>
+                        <span className="opacity-0">{editingIssue ? 'Salvar' : 'Criar'}</span>
+                      </>
+                    ) : (
+                      editingIssue ? 'Salvar' : 'Criar'
+                    )}
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       setShowModal(false);
                       setEditingIssue(null);
-                      setNewIssue({ module: '', description: '', priority: 'medium' });
+                      setNewIssue({ module: '', description: '', priority: 'medium', type: 'problem' });
                     }}
                     className="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
                   >
@@ -607,6 +671,7 @@ export function Dashboard() {
                         {showDescriptionModal.priority === 'high' ? 'Alta' : showDescriptionModal.priority === 'medium' ? 'Média' : 'Baixa'}
                       </span>
                     </div>
+                    <span>{getTypeLabel(showDescriptionModal.type)}</span>
                   </div>
                 </div>
                 <button
